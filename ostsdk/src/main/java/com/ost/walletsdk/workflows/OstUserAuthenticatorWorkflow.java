@@ -83,27 +83,18 @@ abstract public class OstUserAuthenticatorWorkflow extends OstWorkFlowEngine imp
     }
 
     @Override
-    AsyncStatus onUserDeviceValidated() {
+    AsyncStatus afterUserDeviceValidation(Object stateObject) {
         Log.i(TAG, "Ask for authentication");
         if (shouldAskForBioMetric()) {
             new OstBiometricAuthentication(OstSdk.getContext(), getBioMetricCallBack());
         } else {
             return goToState(WorkflowStateManager.PIN_AUTHENTICATION_REQUIRED);
         }
-        return super.onUserDeviceValidated();
+        return super.afterUserDeviceValidation(stateObject);
     }
 
     protected boolean isAuthenticationFlow() {
         return true;
-    }
-
-    protected AsyncStatus performValidations(Object stateObject) {
-        try {
-            ensureValidParams();
-        } catch (OstError ostError) {
-            return postErrorInterrupt(ostError);
-        }
-        return performNext();
     }
 
     @Override

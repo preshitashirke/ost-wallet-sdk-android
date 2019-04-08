@@ -15,6 +15,8 @@ import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Log;
 
+import com.ost.walletsdk.OstConfigs;
+import com.ost.walletsdk.OstConstants;
 import com.ost.walletsdk.ecKeyInteracts.OstKeyManager;
 import com.ost.walletsdk.models.entities.OstDevice;
 import com.ost.walletsdk.models.entities.OstDeviceManager;
@@ -97,7 +99,7 @@ abstract class OstWorkFlowEngine {
     }
 
 
-    //region - Core engine apis
+    //region - Core state machine apis
     public Future<AsyncStatus> perform() {
         return getAsyncQueue().submit(new Callable<AsyncStatus>() {
             @Override
@@ -121,14 +123,14 @@ abstract class OstWorkFlowEngine {
     protected AsyncStatus onStateChanged(String state, Object stateObject) {
         try {
             switch (state) {
-                case INITIAL:
+                case WorkflowStateManager.INITIAL:
                     return performValidations(stateObject);
 
                 case WorkflowStateManager.PARAMS_VALIDATED:
                     return performUserDeviceValidation(stateObject);
 
                 case WorkflowStateManager.DEVICE_VALIDATED:
-                    return onUserDeviceValidated();
+                    return performOnUserDeviceValidation(stateObject);
 
                 case WorkflowStateManager.CANCELLED:
                     if ( stateObject instanceof OstError) {
@@ -207,26 +209,45 @@ abstract class OstWorkFlowEngine {
     //endregion
 
 
-    AsyncStatus onUserDeviceValidated() {
-        return performNext();
+    //region - state machine lifecycle methods
+    private AsyncStatus performOnUserDeviceValidation(Object stateObject) {
+        try {
+            onUserDeviceValidated(stateObject);
+        } catch (OstError err) {
+            return postErrorInterrupt(err);
+        }
+        return new AsyncStatus(true);
     }
 
-    protected boolean isAuthenticationFlow() {
-        return false;
+    AsyncStatus onUserDeviceValidated(Object stateObject) {
+        return new AsyncStatus(true);
     }
 
-    protected AsyncStatus performValidations(Object stateObject) {
+    private AsyncStatus performValidations(Object stateObject) {
         try {
             ensureValidParams();
         } catch (OstError ostError) {
             return postErrorInterrupt(ostError);
         }
+        return afterParamsValidation();
+    }
+
+    AsyncStatus afterParamsValidation() {
         return performNext();
     }
 
-    protected AsyncStatus performUserDeviceValidation(Object stateObject) {
+    AsyncStatus beforeUserDeviceValidation(Object stateObject) {
+        return new AsyncStatus(true);
+    }
+
+    AsyncStatus afterUserDeviceValidation(Object stateObject) {
+        return performNext();
+    }
+
+    private AsyncStatus performUserDeviceValidation(Object stateObject) {
 
         try {
+            beforeUserDeviceValidation(stateObject);
             //Ensure sdk can make Api calls
             ensureApiCommunication();
 
@@ -244,22 +265,27 @@ abstract class OstWorkFlowEngine {
                 ensureDeviceManager();
             }
 
+            return afterUserDeviceValidation(stateObject);
+
         } catch (OstError err) {
             return postErrorInterrupt(err);
         }
+    }
+    //endregion
 
-        return onUserDeviceValidationPerformed(stateObject);
+
+    //region - Flow deciding methods methods
+    protected boolean isAuthenticationFlow() {
+        return false;
     }
 
     private boolean shouldCheckCurrentDeviceAuthorization() {
         return false;
     }
+    //endregion
 
-    protected AsyncStatus onUserDeviceValidationPerformed(Object stateObject) {
-        return performNext();
-    }
 
-    //region - post Methods to Application
+    //region - Post methods to Application
     AsyncStatus postFlowComplete(OstContextEntity ostContextEntity) {
         Log.i(TAG, "Flow complete");
         mHandler.post(new Runnable() {
@@ -335,7 +361,7 @@ abstract class OstWorkFlowEngine {
      * Method that can be called to validate and params.
      * @Dev: Please make sure this method is only used to perform validations
      * that do not need API calls. For any validation that needs API call, please
-     * use onUserDeviceValidationPerformed.
+     * use afterUserDeviceValidation.
      */
     void ensureValidParams() {
         if ( TextUtils.isEmpty(mUserId) ) {
@@ -521,6 +547,32 @@ abstract class OstWorkFlowEngine {
             throw ostError;
         }
         return mOstRules;
+    }
+    //endregion
+
+
+    //region - Helper methods
+    String calculateExpirationHeight(long expiresInSecs) {
+        JSONObject jsonObject = null;
+        long currentBlockNumber, blockGenerationTime;
+        String strCurrentBlockNumber;
+        String strBlockGenerationTime;
+        try {
+            jsonObject = mOstApiClient.getCurrentBlockNumber();
+            CommonUtils commonUtils = new CommonUtils();
+            strCurrentBlockNumber = commonUtils.parseStringResponseForKey(jsonObject, OstConstants.BLOCK_HEIGHT);
+            strBlockGenerationTime = commonUtils.parseStringResponseForKey(jsonObject, OstConstants.BLOCK_TIME);
+        } catch (Throwable e) {
+            throw new OstError("wf_bwf_ceh_1", ErrorCode.CHAIN_API_FAILED);
+        }
+
+        currentBlockNumber = Long.parseLong(strCurrentBlockNumber);
+        blockGenerationTime = Long.parseLong(strBlockGenerationTime);
+        long bufferBlocks = (OstConfigs.getInstance().SESSION_BUFFER_TIME) / blockGenerationTime;
+        long expiresAfterBlocks = expiresInSecs / blockGenerationTime;
+        long expirationHeight = currentBlockNumber + expiresAfterBlocks + bufferBlocks;
+
+        return String.valueOf(expirationHeight);
     }
     //endregion
 

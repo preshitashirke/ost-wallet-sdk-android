@@ -101,7 +101,7 @@ abstract class OstBaseWorkFlow {
      * Method that can be called to validate and params.
      * @Dev: Please make sure this method is only used to perform validations
      * that do not need API calls. For any validation that needs API call, please
-     * use onUserDeviceValidationPerformed.
+     * use afterUserDeviceValidation.
      */
     void ensureValidParams() {
         if ( TextUtils.isEmpty(mUserId) ) {

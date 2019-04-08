@@ -11,6 +11,7 @@
 package com.ost.walletsdk.workflows;
 
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.ost.walletsdk.OstSdk;
@@ -21,7 +22,9 @@ import com.ost.walletsdk.models.entities.OstSession;
 import com.ost.walletsdk.models.entities.OstUser;
 import com.ost.walletsdk.network.OstApiClient;
 import com.ost.walletsdk.utils.AsyncStatus;
+import com.ost.walletsdk.utils.CommonUtils;
 import com.ost.walletsdk.workflows.errors.OstError;
+import com.ost.walletsdk.workflows.errors.OstErrors;
 import com.ost.walletsdk.workflows.errors.OstErrors.ErrorCode;
 import com.ost.walletsdk.workflows.interfaces.OstWorkFlowCallback;
 import com.ost.walletsdk.workflows.services.OstPollingService;
@@ -31,11 +34,10 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 
-public class OstActivateUser extends OstBaseWorkFlow {
+public class OstActivateUser extends OstWorkFlowEngine {
 
     private static final String TAG = "OstActivateUser";
     private final UserPassphrase mPassphrase;
-    private String expirationHeight;
     private final String mSpendingLimit;
     private final long mExpiresAfterInSecs;
 
@@ -47,34 +49,35 @@ public class OstActivateUser extends OstBaseWorkFlow {
         mSpendingLimit = spendingLimitInWei;
     }
 
+    //region - Overridden methods
     @Override
     public OstWorkflowContext.WORKFLOW_TYPE getWorkflowType() {
         return OstWorkflowContext.WORKFLOW_TYPE.ACTIVATE_USER;
     }
 
     @Override
-    synchronized protected AsyncStatus process() {
-        if (!hasValidParams()) {
-            Log.i(TAG, "Work flow has invalid params");
-            return postErrorInterrupt("wf_au_pr_1", ErrorCode.INVALID_WORKFLOW_PARAMS);
+    void ensureValidParams() {
+        super.ensureValidParams();
+        if (null == mPassphrase) {
+            throw new OstError("wf_au_evp_1", ErrorCode.INVALID_USER_PASSPHRASE);
         }
+        if (TextUtils.isEmpty(mSpendingLimit) || mExpiresAfterInSecs < 0) {
+            throw new OstError("wf_au_evp_2", ErrorCode.INVALID_WORKFLOW_PARAMS);
+        }
+    }
 
-        //Load Current Device.
+    @Override
+    AsyncStatus afterUserDeviceValidation(Object stateObject) {
+        if (hasActivatingUser()) {
+            throw new OstError("wf_au_pudv_1", ErrorCode.USER_ACTIVATING);
+        }
+        return super.afterUserDeviceValidation(stateObject);
+    }
+
+    @Override
+    protected AsyncStatus onUserDeviceValidated(Object stateObject) {
         try {
-            //Perform Validations.
-            ensureApiCommunication();
-            ensureOstUser();
-            if ( mOstUser.isActivated() ) {
-                throw new OstError("wf_au_pr_2", ErrorCode.USER_ALREADY_ACTIVATED);
-            } else if ( mOstUser.isActivating() ) {
-                throw new OstError("wf_au_pr_3", ErrorCode.USER_ACTIVATING);
-            }
-
-            ensureOstToken();
-
-            String expirationHeight = this.calculateExpirationHeight(mExpiresAfterInSecs);
-
-
+            String expirationHeight = calculateExpirationHeight(mExpiresAfterInSecs);
 
             // Compute recovery address.
             String recoveryAddress = new OstRecoveryManager(mUserId).getRecoveryAddressFor(mPassphrase);
@@ -88,12 +91,10 @@ public class OstActivateUser extends OstBaseWorkFlow {
                             + " SpendingLimit: %s, RecoveryAddress: %s", sessionAddress,
                     expirationHeight, mSpendingLimit, recoveryAddress));
 
-            OstApiClient ostApiClient = this.mOstApiClient;
-
-            JSONObject response = ostApiClient.postUserActivate(sessionAddress,
+            JSONObject response = mOstApiClient.postUserActivate(sessionAddress,
                     expirationHeight, mSpendingLimit, recoveryAddress);
 
-            if ( !isValidResponse(response)) {
+            if ( !new CommonUtils().isValidResponse(response)) {
                 throw new OstError("wf_au_pr_4", ErrorCode.ACTIVATE_USER_API_FAILED);
             }
 
@@ -133,6 +134,7 @@ public class OstActivateUser extends OstBaseWorkFlow {
 
         return new AsyncStatus(true);
     }
+    //endregion
 
     private boolean hasActivatingUser() {
         return OstSdk.getUser(mUserId).isActivating();

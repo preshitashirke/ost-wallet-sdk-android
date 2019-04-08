@@ -51,7 +51,7 @@ public class OstRegisterDevice extends OstWorkFlowEngine implements OstDeviceReg
     }
 
 
-    //region - Engine code
+    //region - State machine code
     @Override
     List<String> getOrderedState() {
         int PARAMS_VALIDATED_INDEX = 1;
@@ -95,7 +95,7 @@ public class OstRegisterDevice extends OstWorkFlowEngine implements OstDeviceReg
     //endregion
 
 
-    //region - Overiden methods
+    //region - Overridden methods
     @Override
     void ensureValidParams() {
         Log.i(TAG, "Validating user Id");
@@ -103,9 +103,13 @@ public class OstRegisterDevice extends OstWorkFlowEngine implements OstDeviceReg
         if (TextUtils.isEmpty(mTokenId)) {
             throw new OstError("wf_rd_evp_1", ErrorCode.INVALID_TOKEN_ID);
         }
-
-        performRegisterDeviceOperation();
     }
+
+    @Override
+    AsyncStatus afterParamsValidation() {
+        return performRegisterDeviceOperation();
+    }
+
     //endregion
 
 

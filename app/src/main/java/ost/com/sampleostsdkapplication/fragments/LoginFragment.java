@@ -209,14 +209,13 @@ public class LoginFragment extends BaseFragment implements
     public void flowComplete(OstWorkflowContext ostWorkflowContext, OstContextEntity ostContextEntity) {
         super.flowComplete(ostWorkflowContext, ostContextEntity);
 
-        //hide progress after flow complete
-        showProgress(false);
-
         Activity activity = getActivity();
         if (null == getActivity()) {
             Log.e(TAG, "Activity is null");
             return;
         }
+        //hide progress after flow complete
+        showProgress(false);
         LogInUser logInUser = ((App) activity.getApplicationContext()).getLoggedUser();
         String userId = logInUser.getOstUserId();
 
@@ -229,7 +228,10 @@ public class LoginFragment extends BaseFragment implements
     @Override
     public void flowInterrupt(OstWorkflowContext ostWorkflowContext, OstError ostError) {
         super.flowInterrupt(ostWorkflowContext, ostError);
-
+        if (null == getActivity()) {
+            Log.e(TAG, "Activity is null");
+            return;
+        }
         //hide progress after flow interrupt
         showProgress(false);
     }
