@@ -10,23 +10,14 @@
 
 package com.ost.walletsdk.workflows;
 
-import android.content.Context;
-import android.hardware.fingerprint.FingerprintManager;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Log;
 
-import com.ost.walletsdk.OstConfigs;
-import com.ost.walletsdk.OstConstants;
-import com.ost.walletsdk.OstSdk;
-import com.ost.walletsdk.biometric.OstBiometricAuthentication;
 import com.ost.walletsdk.ecKeyInteracts.OstKeyManager;
-import com.ost.walletsdk.ecKeyInteracts.structs.SignedAddDeviceStruct;
 import com.ost.walletsdk.models.entities.OstDevice;
 import com.ost.walletsdk.models.entities.OstDeviceManager;
-import com.ost.walletsdk.models.entities.OstDeviceManagerOperation;
 import com.ost.walletsdk.models.entities.OstRule;
 import com.ost.walletsdk.models.entities.OstToken;
 import com.ost.walletsdk.models.entities.OstUser;
@@ -34,86 +25,80 @@ import com.ost.walletsdk.network.OstApiClient;
 import com.ost.walletsdk.network.OstApiError;
 import com.ost.walletsdk.utils.AsyncStatus;
 import com.ost.walletsdk.utils.CommonUtils;
-import com.ost.walletsdk.utils.EIP712;
-import com.ost.walletsdk.utils.GnosisSafe;
-import com.ost.walletsdk.utils.OstPayloadBuilder;
 import com.ost.walletsdk.workflows.OstWorkflowContext.WORKFLOW_TYPE;
 import com.ost.walletsdk.workflows.errors.OstError;
-import com.ost.walletsdk.workflows.errors.OstErrors;
 import com.ost.walletsdk.workflows.errors.OstErrors.ErrorCode;
-import com.ost.walletsdk.workflows.interfaces.OstPinAcceptInterface;
 import com.ost.walletsdk.workflows.interfaces.OstVerifyDataInterface;
 import com.ost.walletsdk.workflows.interfaces.OstWorkFlowCallback;
 
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
-import java.util.Arrays;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
 
-/**
- * @deprecated Use {@link OstWorkFlowEngine}
- */
-abstract class OstBaseWorkFlow {
-    private static final String TAG = "OstBaseWorkFlow";
+import static com.ost.walletsdk.workflows.WorkflowStateManager.INITIAL;
+
+abstract class OstWorkFlowEngine {
+    private static final String TAG = "OstWorkFlowEngine";
     private final static ThreadPoolExecutor THREAD_POOL_EXECUTOR = (ThreadPoolExecutor) Executors
             .newFixedThreadPool(1);
 
-    final String mUserId;
-    final Handler mHandler;
 
+    //region - Class variables
+    private final Handler mHandler;
+    private WorkflowStateManager stateManager;
     private final WeakReference <OstWorkFlowCallback> workFlowCallbackWeakReference;
+
+    final String mUserId;
+    OstApiClient mOstApiClient;
+    //endregion
+
+
+    //region - Getters
+    public Handler getHandler() {
+        return mHandler;
+    }
 
     protected OstWorkFlowCallback getCallback() {
         return workFlowCallbackWeakReference.get();
     }
-    OstApiClient mOstApiClient;
-    private OstBiometricAuthentication.Callback mBioMetricCallBack;
+
+    ThreadPoolExecutor getAsyncQueue() {
+        return THREAD_POOL_EXECUTOR;
+    }
+
+    public WORKFLOW_TYPE getWorkflowType() {
+        return WORKFLOW_TYPE.UNKNOWN;
+    }
+    //endregion
+
 
     /**
      * @param userId - Ost Platform user-id
      * @param callback - callback handler of the application.
      */
-    OstBaseWorkFlow(String userId, OstWorkFlowCallback callback) {
+    OstWorkFlowEngine(String userId, OstWorkFlowCallback callback) {
         mUserId = userId;
 
         mHandler = new Handler(Looper.getMainLooper());
         workFlowCallbackWeakReference = new WeakReference<>(callback);
+        setStateManager();
         initApiClient();
     }
 
-    void initApiClient() {
-        mOstApiClient = new OstApiClient(mUserId);
+    private void setStateManager() {
+        stateManager = new WorkflowStateManager(getOrderedState());
     }
 
-    boolean hasValidParams() {
-        return !TextUtils.isEmpty(mUserId) && null != mHandler && null != getCallback();
-    }
 
-    /**
-     * Method that can be called to validate and params.
-     * @Dev: Please make sure this method is only used to perform validations
-     * that do not need API calls. For any validation that needs API call, please
-     * use onUserDeviceValidationPerformed.
-     */
-    void ensureValidParams() {
-        if ( TextUtils.isEmpty(mUserId) ) {
-            throw new OstError("wf_bwf_evp_1", ErrorCode.INVALID_USER_ID);
-        }
-
-        if ( null == getCallback() ) {
-            throw new OstError("wf_bwf_evp_2", ErrorCode.INVALID_WORKFLOW_CALLBACK);
-        }
-
-    }
-
+    //region - Core engine apis
     public Future<AsyncStatus> perform() {
         return getAsyncQueue().submit(new Callable<AsyncStatus>() {
             @Override
@@ -123,16 +108,159 @@ abstract class OstBaseWorkFlow {
         });
     }
 
-    ThreadPoolExecutor getAsyncQueue() {
-        return THREAD_POOL_EXECUTOR;
+    synchronized protected AsyncStatus process() {
+        AsyncStatus status;
+        String currentState = stateManager.getCurrentState();
+        Object currentStateObject = stateManager.getStateObject();
+        status = onStateChanged(currentState, currentStateObject);
+        if ( null != status ) {
+            return status;
+        }
+        return new AsyncStatus(true);
     }
 
-    protected abstract AsyncStatus process();
+    protected AsyncStatus onStateChanged(String state, Object stateObject) {
+        try {
+            switch (state) {
+                case INITIAL:
+                    return performValidations(stateObject);
 
-    public OstWorkflowContext.WORKFLOW_TYPE getWorkflowType() {
-        return OstWorkflowContext.WORKFLOW_TYPE.UNKNOWN;
+                case WorkflowStateManager.PARAMS_VALIDATED:
+                    return performUserDeviceValidation(stateObject);
+
+                case WorkflowStateManager.DEVICE_VALIDATED:
+                    return onUserDeviceValidated();
+
+                case WorkflowStateManager.CANCELLED:
+                    if ( stateObject instanceof OstError) {
+                        return postErrorInterrupt( (OstError) stateObject );
+                    } else {
+                        OstError error = new OstError("wf_wfe_osc_canceled", ErrorCode.UNKNOWN);
+                        return postErrorInterrupt(error);
+                    }
+
+                case WorkflowStateManager.COMPLETED:
+                    return new AsyncStatus(true);
+
+                case WorkflowStateManager.COMPLETED_WITH_ERROR:
+                    return new AsyncStatus(false);
+                case WorkflowStateManager.CALLBACK_LOST:
+                    Log.w(TAG, "The callback instance has been lost. Workflow class name: " + getClass().getName());
+                    return new AsyncStatus(false);
+            }
+        } catch (OstError ostError) {
+            return postErrorInterrupt(ostError);
+        } catch (Throwable throwable) {
+            OstError ostError = new OstError("wf_wfe_osc_1", ErrorCode.UNCAUGHT_EXCEPTION_HANDELED);
+            ostError.setStackTrace(throwable.getStackTrace());
+            return postErrorInterrupt(ostError);
+        }
+        return new AsyncStatus(true);
+    }
+    //endregion
+
+
+    //region - init Methods for overriding
+    private void initApiClient() {
+        mOstApiClient = new OstApiClient(mUserId);
     }
 
+    List<String> getOrderedState() {
+        List<String> orderedStates = new ArrayList<>();
+        orderedStates.add(WorkflowStateManager.INITIAL);
+        orderedStates.add(WorkflowStateManager.PARAMS_VALIDATED);
+        orderedStates.add(WorkflowStateManager.DEVICE_VALIDATED);
+
+        orderedStates.add(WorkflowStateManager.CANCELLED);
+        orderedStates.add(WorkflowStateManager.COMPLETED);
+        orderedStates.add(WorkflowStateManager.COMPLETED_WITH_ERROR);
+        orderedStates.add(WorkflowStateManager.CALLBACK_LOST);
+        return orderedStates;
+    }
+    //endregion
+
+
+    //region - State machine methods
+    protected AsyncStatus performNext(Object stateObject) {
+        stateManager.setNextState(stateObject);
+        return process();
+    }
+
+    protected AsyncStatus goToState(String state, Object stateObject) {
+        stateManager.setState(state, stateObject);
+        return process();
+    }
+
+    protected void performWithState(String state, Object stateObject) {
+        stateManager.setState(state, stateObject);
+        perform();
+    }
+
+    protected AsyncStatus goToState(String state) {
+        return goToState(state, null);
+    }
+    protected AsyncStatus performNext() {
+        return performNext(null);
+    }
+    protected void performWithState(String state) {
+        performWithState(state, null);
+    }
+    //endregion
+
+
+    AsyncStatus onUserDeviceValidated() {
+        return new AsyncStatus(true);
+    }
+
+    protected boolean isAuthenticationFlow() {
+        return false;
+    }
+
+    protected AsyncStatus performValidations(Object stateObject) {
+        try {
+            ensureValidParams();
+        } catch (OstError ostError) {
+            return postErrorInterrupt(ostError);
+        }
+        return performNext();
+    }
+
+    protected AsyncStatus performUserDeviceValidation(Object stateObject) {
+
+        try {
+            //Ensure sdk can make Api calls
+            ensureApiCommunication();
+
+            // Ensure we have OstUser complete entity.
+            ensureOstUser( isAuthenticationFlow() );
+
+            // Ensure we have OstToken complete entity.
+            ensureOstToken();
+
+            if ( shouldCheckCurrentDeviceAuthorization() ) {
+                //Ensure Device is Authorized.
+                ensureDeviceAuthorized();
+
+                //Ensures Device Manager is present as derived classes are likely going to need nonce.
+                ensureDeviceManager();
+            }
+
+        } catch (OstError err) {
+            return postErrorInterrupt(err);
+        }
+
+        return onUserDeviceValidationPerformed(stateObject);
+    }
+
+    private boolean shouldCheckCurrentDeviceAuthorization() {
+        return false;
+    }
+
+    protected AsyncStatus onUserDeviceValidationPerformed(Object stateObject) {
+        return performNext();
+    }
+
+    //region - post Methods to Application
     AsyncStatus postFlowComplete(OstContextEntity ostContextEntity) {
         Log.i(TAG, "Flow complete");
         mHandler.post(new Runnable() {
@@ -151,7 +279,7 @@ abstract class OstBaseWorkFlow {
         return postFlowComplete(null);
     }
 
-    AsyncStatus postErrorInterrupt(String internalErrCode, OstErrors.ErrorCode errorCode) {
+    AsyncStatus postErrorInterrupt(String internalErrCode, ErrorCode errorCode) {
         Log.i(TAG, "Flow Error");
         OstError error = new OstError(internalErrCode, errorCode);
         return postErrorInterrupt(error);
@@ -186,51 +314,10 @@ abstract class OstBaseWorkFlow {
             }
         });
     }
+    //endregion
 
-    void postVerifyData(WORKFLOW_TYPE workFlowType,
-                        OstContextEntity ostContextEntity,
-                        OstVerifyDataInterface ostVerifyDataInterface) {
 
-        Log.i(TAG, "Post Verify data");
-        mHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                OstWorkFlowCallback callback = getCallback();
-                if ( null != callback ) {
-                    callback.verifyData(
-                            new OstWorkflowContext(workFlowType),
-                            ostContextEntity,
-                            ostVerifyDataInterface
-                    );
-                }
-            }
-        });
-    }
-
-    OstBiometricAuthentication.Callback getBioMetricCallBack() {
-        if (null == mBioMetricCallBack) {
-            mBioMetricCallBack = new OstBiometricAuthentication.Callback() {
-                @Override
-                public void onAuthenticated() {
-                    Log.d(TAG, "Biometric authentication success");
-                    onBioMetricAuthenticationSuccess();
-                }
-
-                @Override
-                public void onError() {
-                    Log.d(TAG, "Biometric authentication fail");
-                    onBioMetricAuthenticationFail();
-                }
-            };
-        }
-        return mBioMetricCallBack;
-    }
-
-    void onBioMetricAuthenticationFail() {
-    }
-    void onBioMetricAuthenticationSuccess() {
-    }
-
+    //region - Condition Checks
     boolean hasDeviceApiKey(OstDevice ostDevice) {
         OstKeyManager ostKeyManager = new OstKeyManager(mUserId);
         return ostKeyManager.getApiKeyAddress().equalsIgnoreCase(ostDevice.getApiSignerAddress());
@@ -240,40 +327,28 @@ abstract class OstBaseWorkFlow {
         //Must have Device Api Key which should have been registered.
         return hasDeviceApiKey(ostDevice) && ostDevice.canMakeApiCall();
     }
+    //endregion
 
-    String parseResponseForKey(JSONObject jsonObject, String key) {
-        String value = null;
-        try {
-            if (!jsonObject.getBoolean(OstConstants.RESPONSE_SUCCESS)) {
-                Log.e(TAG, "JSON response false");
-                return null;
-            }
-            JSONObject jsonData = jsonObject.getJSONObject(OstConstants.RESPONSE_DATA);
 
-            JSONObject resultTypeObject = jsonData.getJSONObject(jsonData.getString(OstConstants.RESULT_TYPE));
+    //region - Ensure Data methods
 
-            value = resultTypeObject.getString(key);
-        } catch (JSONException e) {
-            Log.e(TAG, "JSON Exception");
+    /**
+     * Method that can be called to validate and params.
+     * @Dev: Please make sure this method is only used to perform validations
+     * that do not need API calls. For any validation that needs API call, please
+     * use onUserDeviceValidationPerformed.
+     */
+    void ensureValidParams() {
+        if ( TextUtils.isEmpty(mUserId) ) {
+            throw new OstError("wf_bwf_evp_1", ErrorCode.INVALID_USER_ID);
         }
-        return value;
+
+        if ( null == getCallback() ) {
+            throw new OstError("wf_bwf_evp_2", ErrorCode.INVALID_WORKFLOW_CALLBACK);
+        }
+
     }
 
-    boolean isValidResponse(JSONObject jsonObject) {
-        try {
-            if (jsonObject.getBoolean(OstConstants.RESPONSE_SUCCESS)) {
-                return true;
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "JSON Exception");
-        }
-        return false;
-    }
-
-
-
-
-    //region - Ensure Data
     OstDevice mCurrentDevice;
     boolean hasSyncedDeviceToEnsureApiCommunication = false;
     void ensureApiCommunication() throws OstError {
@@ -449,121 +524,6 @@ abstract class OstBaseWorkFlow {
         }
         return mOstRules;
     }
+    //endregion
 
-    boolean shouldAskForBioMetric() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            //Fingerprint API only available on from Android 6.0 (M)
-            FingerprintManager fingerprintManager = (FingerprintManager) OstSdk.getContext()
-                    .getSystemService(Context.FINGERPRINT_SERVICE);
-            return null != fingerprintManager && fingerprintManager.isHardwareDetected()
-                    && fingerprintManager.hasEnrolledFingerprints();
-        }
-        return false;
-    }
-
-    boolean hasActivatedUser() {
-        OstUser ostUser = OstUser.getById(mUserId);
-        return ostUser.getStatus().equalsIgnoreCase(OstUser.CONST_STATUS.ACTIVATED);
-    }
-
-    boolean hasAuthorizedDevice() {
-        OstDevice ostDevice = OstUser.getById(mUserId).getCurrentDevice();
-        return ostDevice.getStatus().toLowerCase().equals(OstDevice.CONST_STATUS.AUTHORIZED);
-    }
-
-    String getEIP712Hash(String deviceAddress, String deviceManagerAddress) {
-        String callData = new GnosisSafe().getAddOwnerWithThresholdExecutableData(deviceAddress);
-
-        int nonce = OstDeviceManager.getById(deviceManagerAddress).getNonce();
-
-        JSONObject safeTxn = new GnosisSafe.SafeTxnBuilder()
-                .setCallData(callData)
-                .setVerifyingContract(deviceManagerAddress)
-                .setToAddress(deviceManagerAddress)
-                .setNonce(String.valueOf(nonce))
-                .build();
-
-        //EIP-712
-        Log.i(TAG, "Performing EIP712 encoding ");
-        Log.d(TAG, String.format("String to be encoded  %s", safeTxn.toString()));
-        String safeTxnEIP712Hash = null;
-        try {
-            safeTxnEIP712Hash = new EIP712(safeTxn).toEIP712TransactionHash();
-        } catch (Exception e) {
-            e.printStackTrace();
-            Log.e(TAG, "EIP-712 error while parsing json object of sageTxn");
-            return null;
-        }
-        return safeTxnEIP712Hash;
-    }
-
-    AsyncStatus makeAddDeviceCall(SignedAddDeviceStruct signedAddDeviceStruct) {
-        Log.i(TAG, "Api Call payload");
-        try {
-            String deviceManagerAddress = signedAddDeviceStruct.getDeviceManagerAddress();
-            Map<String, Object> map = new OstPayloadBuilder()
-                    .setDataDefination(OstDeviceManagerOperation.KIND_TYPE.AUTHORIZE_DEVICE.toUpperCase())
-                    .setRawCalldata(signedAddDeviceStruct.getRawCallData())
-                    .setCallData(signedAddDeviceStruct.getCallData())
-                    .setTo(deviceManagerAddress)
-                    .setSignatures(signedAddDeviceStruct.getSignature())
-                    .setSigners(Arrays.asList(signedAddDeviceStruct.getSignerAddress()))
-                    .setNonce(String.valueOf(signedAddDeviceStruct.getNonce()))
-                    .build();
-            OstApiClient ostApiClient = new OstApiClient(mUserId);
-            JSONObject jsonObject = ostApiClient.postAddDevice(map);
-            Log.d(TAG, String.format("JSON Object response: %s", jsonObject.toString()));
-            if (isValidResponse(jsonObject)) {
-
-                //increment nonce
-                OstDeviceManager.getById(deviceManagerAddress).incrementNonce();
-
-                return new AsyncStatus(true);
-            } else {
-                return new AsyncStatus(false);
-            }
-        } catch (IOException e) {
-            Log.e(TAG, "IO Exception");
-            return new AsyncStatus(false);
-        }
-    }
-
-    String calculateExpirationHeight(long expiresInSecs) {
-        JSONObject jsonObject = null;
-        long currentBlockNumber, blockGenerationTime;
-        String strCurrentBlockNumber;
-        String strBlockGenerationTime;
-        try {
-            jsonObject = mOstApiClient.getCurrentBlockNumber();
-            strCurrentBlockNumber = parseResponseForKey(jsonObject, OstConstants.BLOCK_HEIGHT);
-            strBlockGenerationTime = parseResponseForKey(jsonObject, OstConstants.BLOCK_TIME);
-        } catch (Throwable e) {
-            throw new OstError("wf_bwf_ceh_1", ErrorCode.CHAIN_API_FAILED);
-        }
-
-        currentBlockNumber = Long.parseLong(strCurrentBlockNumber);
-        blockGenerationTime = Long.parseLong(strBlockGenerationTime);
-        long bufferBlocks = (OstConfigs.getInstance().SESSION_BUFFER_TIME) / blockGenerationTime;
-        long expiresAfterBlocks = expiresInSecs / blockGenerationTime;
-        long expirationHeight = currentBlockNumber + expiresAfterBlocks + bufferBlocks;
-
-        return String.valueOf(expirationHeight);
-    }
-
-
-
-    // Remove these.
-    boolean validatePin(String a, String b) {
-        return true;
-    }
-
-    AsyncStatus postPinValidated() {
-        OstError error = new OstError("bwf_ppv_1", ErrorCode.DEPRECATED);
-        return postErrorInterrupt(error);
-    }
-
-    AsyncStatus postInvalidPin(OstPinAcceptInterface i_d_k) {
-        OstError error = new OstError("bwf_pip_1", ErrorCode.DEPRECATED);
-        return postErrorInterrupt(error);
-    }
 }

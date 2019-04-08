@@ -25,7 +25,9 @@ import com.ost.walletsdk.workflows.interfaces.OstWorkFlowCallback;
 
 import java.util.ArrayList;
 
-
+/**
+ * @deprecated Use {@link OstUserAuthenticatorWorkflow}
+ */
 abstract public class OstBaseUserAuthenticatorWorkflow extends OstBaseWorkFlow implements OstPinAcceptInterface {
     private static String TAG = "OstBUAWorkFlow";
     private int mPinAskCount = 0;
