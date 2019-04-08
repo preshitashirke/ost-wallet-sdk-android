@@ -75,7 +75,7 @@ public class OstActivateUser extends OstWorkFlowEngine {
     }
 
     @Override
-    protected AsyncStatus onUserDeviceValidated(Object stateObject) {
+    protected AsyncStatus onUserDeviceValidation(Object stateObject) {
         try {
             String expirationHeight = calculateExpirationHeight(mExpiresAfterInSecs);
 

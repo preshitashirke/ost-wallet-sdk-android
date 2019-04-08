@@ -44,8 +44,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
 
-import static com.ost.walletsdk.workflows.WorkflowStateManager.INITIAL;
-
 abstract class OstWorkFlowEngine {
     private static final String TAG = "OstWorkFlowEngine";
     private final static ThreadPoolExecutor THREAD_POOL_EXECUTOR = (ThreadPoolExecutor) Executors
@@ -212,14 +210,14 @@ abstract class OstWorkFlowEngine {
     //region - state machine lifecycle methods
     private AsyncStatus performOnUserDeviceValidation(Object stateObject) {
         try {
-            onUserDeviceValidated(stateObject);
+            onUserDeviceValidation(stateObject);
         } catch (OstError err) {
             return postErrorInterrupt(err);
         }
         return new AsyncStatus(true);
     }
 
-    AsyncStatus onUserDeviceValidated(Object stateObject) {
+    AsyncStatus onUserDeviceValidation(Object stateObject) {
         return new AsyncStatus(true);
     }
 
@@ -275,11 +273,11 @@ abstract class OstWorkFlowEngine {
 
 
     //region - Flow deciding methods methods
-    protected boolean isAuthenticationFlow() {
+    boolean isAuthenticationFlow() {
         return false;
     }
 
-    private boolean shouldCheckCurrentDeviceAuthorization() {
+    boolean shouldCheckCurrentDeviceAuthorization() {
         return false;
     }
     //endregion
