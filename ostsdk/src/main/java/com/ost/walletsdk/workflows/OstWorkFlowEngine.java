@@ -28,7 +28,6 @@ import com.ost.walletsdk.utils.CommonUtils;
 import com.ost.walletsdk.workflows.OstWorkflowContext.WORKFLOW_TYPE;
 import com.ost.walletsdk.workflows.errors.OstError;
 import com.ost.walletsdk.workflows.errors.OstErrors.ErrorCode;
-import com.ost.walletsdk.workflows.interfaces.OstVerifyDataInterface;
 import com.ost.walletsdk.workflows.interfaces.OstWorkFlowCallback;
 
 import org.json.JSONArray;
@@ -161,7 +160,7 @@ abstract class OstWorkFlowEngine {
 
 
     //region - init Methods for overriding
-    private void initApiClient() {
+    void initApiClient() {
         mOstApiClient = new OstApiClient(mUserId);
     }
 
@@ -209,7 +208,7 @@ abstract class OstWorkFlowEngine {
 
 
     AsyncStatus onUserDeviceValidated() {
-        return new AsyncStatus(true);
+        return performNext();
     }
 
     protected boolean isAuthenticationFlow() {
@@ -346,7 +345,6 @@ abstract class OstWorkFlowEngine {
         if ( null == getCallback() ) {
             throw new OstError("wf_bwf_evp_2", ErrorCode.INVALID_WORKFLOW_CALLBACK);
         }
-
     }
 
     OstDevice mCurrentDevice;

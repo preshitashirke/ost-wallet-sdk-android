@@ -26,10 +26,13 @@ import com.ost.walletsdk.workflows.interfaces.OstWorkFlowCallback;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * To Register current device on OST Platform through App
  */
-public class OstRegisterDevice extends OstBaseWorkFlow implements OstDeviceRegisteredInterface {
+public class OstRegisterDevice extends OstWorkFlowEngine implements OstDeviceRegisteredInterface {
 
     private static final String TAG = "OstRegisterDevice";
     private final boolean mForceSync;
@@ -40,20 +43,6 @@ public class OstRegisterDevice extends OstBaseWorkFlow implements OstDeviceRegis
         return OstWorkflowContext.WORKFLOW_TYPE.SETUP_DEVICE;
     }
 
-    private enum STATES {
-        INITIAL,
-        CANCELED,
-        REGISTERED,
-    }
-
-    private STATES mCurrentState = STATES.INITIAL;
-    private Object mStateObject = null;
-
-    private void setFlowState(STATES currentState, Object stateObject) {
-        this.mCurrentState = currentState;
-        this.mStateObject = stateObject;
-    }
-
     public OstRegisterDevice(String userId, String tokenId, boolean forceSync, OstWorkFlowCallback callback) {
         super(userId, callback);
 
@@ -61,75 +50,121 @@ public class OstRegisterDevice extends OstBaseWorkFlow implements OstDeviceRegis
         mForceSync = forceSync;
     }
 
-    synchronized public AsyncStatus process() {
-        switch (mCurrentState) {
-            case INITIAL:
-                Log.d(TAG, String.format("Workflow for userId: %s started", mUserId));
 
-                Log.i(TAG, "Validating user Id");
-                if (!hasValidParams()) {
-                    return postErrorInterrupt("wf_rd_pr_1" , ErrorCode.INVALID_WORKFLOW_PARAMS);
-                }
+    //region - Engine code
+    @Override
+    List<String> getOrderedState() {
+        int PARAMS_VALIDATED_INDEX = 1;
+        List<String> orderedStates = super.getOrderedState();
 
-                Log.i(TAG, "Initializing User and Token");
-                OstUser ostUser;
-                ostUser = OstUser.init(mUserId, mTokenId);
-                OstToken.init(mTokenId);
-                initApiClient();
+        orderedStates.remove(PARAMS_VALIDATED_INDEX);
+        orderedStates.remove(PARAMS_VALIDATED_INDEX);
+        List<String> authStates = new ArrayList<>();
+        authStates.add(WorkflowStateManager.REGISTERED);
 
-                Log.i(TAG, "Creating current device if does not exist");
-                OstDevice ostDevice = createOrGetCurrentDevice(ostUser);
-                if (null == ostDevice) {
-                    return postErrorInterrupt("wf_rd_pr_2" , ErrorCode.CREATE_DEVICE_FAILED);
-                }
+        orderedStates.addAll(PARAMS_VALIDATED_INDEX, authStates);
+        return orderedStates;
+    }
 
-                Log.i(TAG, "Check we are able to access device keys");
-                if (!hasDeviceApiKey(ostDevice)) {
-                    return postErrorInterrupt("wf_rd_pr_3", ErrorCode.CREATE_DEVICE_FAILED);
-                }
+    @Override
+    protected AsyncStatus onStateChanged(String state, Object stateObject) {
+        try {
+            switch (state) {
+                case WorkflowStateManager.REGISTERED:
+                    Log.i(TAG, "Device registered");
+                    // Verify Device Registration before sync.
+                    AsyncStatus verificationStatus = verifyDeviceRegistered();
 
-                Log.i(TAG, "Check if device has been registered.");
-                if (OstDevice.CONST_STATUS.CREATED.equalsIgnoreCase( ostDevice.getStatus() )  ) {
-                    Log.i(TAG, "Registering device");
-                    registerDevice(ostDevice);
-                    return new AsyncStatus(true);
-                }
-                Log.i(TAG, "Device is already registered. ostDevice.status:" + ostDevice.getStatus() );
+                    if ( verificationStatus.isSuccess() ) {
+                        //Sync Registered Entities.
+                        syncRegisteredEntities();
+                    }
 
-                // Verify Device Registration before sync.
-                AsyncStatus status = verifyDeviceRegistered();
-
-                //Sync if needed.
-                if ( status.isSuccess() ) {
-                    sync();
-                }
-
-                //Lets verify if device was registered.
-                return status;
-
-            case REGISTERED:
-                Log.i(TAG, "Device registered");
-                // Verify Device Registration before sync.
-                AsyncStatus verificationStatus = verifyDeviceRegistered();
-
-                if ( verificationStatus.isSuccess() ) {
-                    //Sync Registered Entities.
-                    syncRegisteredEntities();
-                }
-
-                //Lets verify if device was registered.
-                return verificationStatus;
-
-            case CANCELED:
-                return postErrorInterrupt("wf_rd_pr_3" , ErrorCode.WORKFLOW_CANCELLED);
+                    //Lets verify if device was registered.
+                    return verificationStatus;
+            }
+        } catch (OstError ostError) {
+            return postErrorInterrupt(ostError);
+        } catch (Throwable throwable) {
+            OstError ostError = new OstError("wf_rd_osc_1", ErrorCode.UNCAUGHT_EXCEPTION_HANDELED);
+            ostError.setStackTrace(throwable.getStackTrace());
+            return postErrorInterrupt(ostError);
         }
-        return new AsyncStatus(true);
+        return super.onStateChanged(state, stateObject);
+    }
+    //endregion
+
+
+    //region - Overiden methods
+    @Override
+    void ensureValidParams() {
+        Log.i(TAG, "Validating user Id");
+        super.ensureValidParams();
+        if (TextUtils.isEmpty(mTokenId)) {
+            throw new OstError("wf_rd_evp_1", ErrorCode.INVALID_TOKEN_ID);
+        }
+
+        performRegisterDeviceOperation();
+    }
+    //endregion
+
+
+    //region - Interface methods
+    @Override
+    public void deviceRegistered(JSONObject apiResponse) {
+        performWithState(WorkflowStateManager.REGISTERED, apiResponse);
+    }
+
+    @Override
+    public void cancelFlow() {
+        performWithState(WorkflowStateManager.CANCELLED);
+    }
+    //endregion
+
+
+    //region - Helper methods
+    private AsyncStatus performRegisterDeviceOperation() {
+        Log.i(TAG, "Initializing User and Token");
+        OstUser ostUser;
+        ostUser = OstUser.init(mUserId, mTokenId);
+        OstToken.init(mTokenId);
+        initApiClient();
+
+        Log.i(TAG, "Creating current device if does not exist");
+        OstDevice ostDevice = createOrGetCurrentDevice(ostUser);
+        if (null == ostDevice) {
+            return postErrorInterrupt("wf_rd_pr_2" , ErrorCode.CREATE_DEVICE_FAILED);
+        }
+
+        Log.i(TAG, "Check we are able to access device keys");
+        if (!hasDeviceApiKey(ostDevice)) {
+            return postErrorInterrupt("wf_rd_pr_3", ErrorCode.CREATE_DEVICE_FAILED);
+        }
+
+        Log.i(TAG, "Check if device has been registered.");
+        if (OstDevice.CONST_STATUS.CREATED.equalsIgnoreCase( ostDevice.getStatus() )  ) {
+            Log.i(TAG, "Registering device");
+            registerDevice(ostDevice);
+            return new AsyncStatus(true);
+        }
+        Log.i(TAG, "Device is already registered. ostDevice.status:" + ostDevice.getStatus() );
+
+        // Verify Device Registration before sync.
+        AsyncStatus status = verifyDeviceRegistered();
+
+        //Sync if needed.
+        if ( status.isSuccess() ) {
+            sync();
+        }
+
+        //Lets verify if device was registered.
+        return status;
     }
 
     private void syncRegisteredEntities() {
         Log.i(TAG, "Syncing registered entities.");
-        //To-Do: [Future] Check if we really need to sync device here.
-        new OstSdkSync(mUserId, OstSdkSync.SYNC_ENTITY.USER, OstSdkSync.SYNC_ENTITY.DEVICE, OstSdkSync.SYNC_ENTITY.TOKEN).perform();
+        ensureOstUser(true);
+        ensureOstToken();
     }
 
     private void sync() {
@@ -139,10 +174,9 @@ public class OstRegisterDevice extends OstBaseWorkFlow implements OstDeviceRegis
         }
     }
 
-
     private void registerDevice(OstDevice ostDevice) {
         final JSONObject apiResponse = buildApiResponse(ostDevice);
-        mHandler.post(new Runnable() {
+        getHandler().post(new Runnable() {
             @Override
             public void run() {
                 OstWorkFlowCallback callback = getCallback();
@@ -165,10 +199,6 @@ public class OstRegisterDevice extends OstBaseWorkFlow implements OstDeviceRegis
         return ostDevice;
     }
 
-    boolean hasValidParams() {
-        return super.hasValidParams() && !TextUtils.isEmpty(mTokenId);
-    }
-
     private JSONObject buildApiResponse(OstDevice ostDevice) {
         JSONObject jsonObject = new JSONObject();
         if (null == ostDevice) {
@@ -182,18 +212,6 @@ public class OstRegisterDevice extends OstBaseWorkFlow implements OstDeviceRegis
             }
             return jsonObject;
         }
-    }
-
-    @Override
-    public void deviceRegistered(JSONObject apiResponse) {
-        setFlowState(STATES.REGISTERED, apiResponse);
-        perform();
-    }
-
-    @Override
-    public void cancelFlow() {
-        setFlowState(OstRegisterDevice.STATES.CANCELED, null);
-        perform();
     }
 
     private AsyncStatus verifyDeviceRegistered() {
@@ -221,4 +239,5 @@ public class OstRegisterDevice extends OstBaseWorkFlow implements OstDeviceRegis
             return postErrorInterrupt( error );
         }
     }
+    //endregion
 }

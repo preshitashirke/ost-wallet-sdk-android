@@ -20,6 +20,7 @@ class WorkflowStateManager {
     public static final String INITIAL = "INITIAL";
     public static final String PARAMS_VALIDATED = "PARAMS_VALIDATED";
     public static final String DEVICE_VALIDATED = "DEVICE_VALIDATED";
+    public static final String REGISTERED = "REGISTERED";
     public static final String PIN_AUTHENTICATION_REQUIRED = "PIN_AUTHENTICATION_REQUIRED";
     public static final String PIN_INFO_RECEIVED = "PIN_INFO_RECEIVED";
     public static final String AUTHENTICATED = "AUTHENTICATED";
