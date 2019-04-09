@@ -250,7 +250,7 @@ abstract class OstWorkFlowEngine {
             ensureApiCommunication();
 
             // Ensure we have OstUser complete entity.
-            ensureOstUser( isAuthenticationFlow() );
+            ensureOstUser();
 
             // Ensure we have OstToken complete entity.
             ensureOstToken();
@@ -273,10 +273,6 @@ abstract class OstWorkFlowEngine {
 
 
     //region - Flow deciding methods methods
-    boolean isAuthenticationFlow() {
-        return false;
-    }
-
     boolean shouldCheckCurrentDeviceAuthorization() {
         return false;
     }

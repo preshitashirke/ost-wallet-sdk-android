@@ -93,10 +93,6 @@ abstract public class OstUserAuthenticatorWorkflow extends OstWorkFlowEngine imp
         return super.afterUserDeviceValidation(stateObject);
     }
 
-    protected boolean isAuthenticationFlow() {
-        return true;
-    }
-
     @Override
     public void pinEntered(UserPassphrase passphrase) {
         performWithState(WorkflowStateManager.PIN_INFO_RECEIVED, passphrase);
@@ -212,6 +208,11 @@ abstract public class OstUserAuthenticatorWorkflow extends OstWorkFlowEngine imp
             };
         }
         return mBioMetricCallBack;
+    }
+
+    @Override
+    void ensureOstUser() throws OstError {
+        super.ensureOstUser(true);
     }
 
     AsyncStatus performOnAuthenticated() {

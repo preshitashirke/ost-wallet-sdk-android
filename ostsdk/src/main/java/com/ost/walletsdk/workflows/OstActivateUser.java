@@ -34,6 +34,9 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 
+/**
+ * Workflow activate the user, authorize device and add Session
+ */
 public class OstActivateUser extends OstWorkFlowEngine {
 
     private static final String TAG = "OstActivateUser";
@@ -95,7 +98,7 @@ public class OstActivateUser extends OstWorkFlowEngine {
                     expirationHeight, mSpendingLimit, recoveryAddress);
 
             if ( !new CommonUtils().isValidResponse(response)) {
-                throw new OstError("wf_au_pr_4", ErrorCode.ACTIVATE_USER_API_FAILED);
+                throw new OstError("wf_au_udv_1", ErrorCode.ACTIVATE_USER_API_FAILED);
             }
 
             // Let the app know that kit has accepted the request.
@@ -110,7 +113,7 @@ public class OstActivateUser extends OstWorkFlowEngine {
         } catch (OstError error) {
             return postErrorInterrupt(error);
         } catch (IOException e) {
-            OstError error = new OstError("wf_au_pr_4", ErrorCode.ACTIVATE_USER_API_FAILED);
+            OstError error = new OstError("wf_au_udv_2", ErrorCode.ACTIVATE_USER_API_FAILED);
             return postErrorInterrupt(error);
         } finally {
             mPassphrase.wipe();
@@ -123,7 +126,7 @@ public class OstActivateUser extends OstWorkFlowEngine {
                 OstUser.CONST_STATUS.CREATED);
         if (bundle.getBoolean(OstPollingService.EXTRA_IS_POLLING_TIMEOUT, true)) {
             Log.d(TAG, String.format("Polling time out for user Id: %s", mUserId));
-            return postErrorInterrupt("wf_au_pr_5", ErrorCode.ACTIVATE_USER_API_POLLING_FAILED);
+            return postErrorInterrupt("wf_au_udv_3", ErrorCode.ACTIVATE_USER_API_POLLING_FAILED);
         }
         Log.i(TAG, "Syncing Entities: User, Device, Sessions");
         new OstSdkSync(mUserId, OstSdkSync.SYNC_ENTITY.USER, OstSdkSync.SYNC_ENTITY.DEVICE,

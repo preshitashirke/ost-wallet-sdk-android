@@ -137,12 +137,12 @@ public class OstRegisterDevice extends OstWorkFlowEngine implements OstDeviceReg
         Log.i(TAG, "Creating current device if does not exist");
         OstDevice ostDevice = createOrGetCurrentDevice(ostUser);
         if (null == ostDevice) {
-            return postErrorInterrupt("wf_rd_pr_2" , ErrorCode.CREATE_DEVICE_FAILED);
+            return postErrorInterrupt("wf_rd_prdo_1" , ErrorCode.CREATE_DEVICE_FAILED);
         }
 
         Log.i(TAG, "Check we are able to access device keys");
         if (!hasDeviceApiKey(ostDevice)) {
-            return postErrorInterrupt("wf_rd_pr_3", ErrorCode.CREATE_DEVICE_FAILED);
+            return postErrorInterrupt("wf_rd_prdo_2", ErrorCode.CREATE_DEVICE_FAILED);
         }
 
         Log.i(TAG, "Check if device has been registered.");

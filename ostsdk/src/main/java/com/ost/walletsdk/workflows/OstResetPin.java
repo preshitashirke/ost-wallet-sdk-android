@@ -73,7 +73,7 @@ public class OstResetPin extends OstWorkFlowEngine {
             mOstApiClient.getDevice(mOstUser.getCurrentDevice().getAddress());
         } catch (IOException e) {
             Log.e(TAG, "GetDevice api failed");
-            return postErrorInterrupt("wf_rp_pr_4", OstErrors.ErrorCode.GET_USER_API_FAILED);
+            return postErrorInterrupt("wf_rp_udv_1", OstErrors.ErrorCode.GET_USER_API_FAILED);
         }
 
         SignedResetRecoveryStruct struct;
@@ -98,7 +98,7 @@ public class OstResetPin extends OstWorkFlowEngine {
         }
 
         if (!new CommonUtils().isValidResponse(postRecoveryAddresssResponse)) {
-            return postErrorInterrupt("wf_rp_pr_5", OstErrors.ErrorCode.POST_RESET_RECOVERY_API_FAILED);
+            return postErrorInterrupt("wf_rp_udv_2", OstErrors.ErrorCode.POST_RESET_RECOVERY_API_FAILED);
         }
 
         JSONObject jsonData = postRecoveryAddresssResponse.optJSONObject(OstConstants.RESPONSE_DATA);
@@ -107,7 +107,7 @@ public class OstResetPin extends OstWorkFlowEngine {
         try {
             ostRecoveryOwner = OstRecoveryOwner.parse(resultTypeObject);
         } catch (JSONException e) {
-            return postErrorInterrupt("wf_rp_pr_6", OstErrors.ErrorCode.POST_RESET_RECOVERY_API_FAILED);
+            return postErrorInterrupt("wf_rp_udv_3", OstErrors.ErrorCode.POST_RESET_RECOVERY_API_FAILED);
         }
 
         postRequestAcknowledge(new OstWorkflowContext(getWorkflowType()), new OstContextEntity(ostRecoveryOwner, OstSdk.RECOVERY_OWNER));
@@ -118,7 +118,7 @@ public class OstResetPin extends OstWorkFlowEngine {
 
         if (bundle.getBoolean(OstPollingService.EXTRA_IS_POLLING_TIMEOUT, true)) {
             Log.d(TAG, String.format("Polling time out for recovery owner Id: %s", newRecoveryOwnerAddress));
-            return postErrorInterrupt("wf_rp_pr_7", OstErrors.ErrorCode.POLLING_TIMEOUT);
+            return postErrorInterrupt("wf_rp_udv_4", OstErrors.ErrorCode.POLLING_TIMEOUT);
         }
 
         Log.i(TAG, "Response received for RecoveryOwner");
@@ -142,10 +142,5 @@ public class OstResetPin extends OstWorkFlowEngine {
     @Override
     public OstWorkflowContext.WORKFLOW_TYPE getWorkflowType() {
         return OstWorkflowContext.WORKFLOW_TYPE.RESET_PIN;
-    }
-
-    @Override
-    boolean shouldCheckCurrentDeviceAuthorization() {
-        return false;
     }
 }
