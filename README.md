@@ -39,6 +39,7 @@ dependencies {
 - Place the file under main directory's assets folder <br>
 
   File path example: app -> src -> main -> assets -> ost-mobilesdk.json</br>
+ **Please remember to add these configurations. Failing to do so may cause the application to crash at runtime**
 
 ### Update build.gradle files
 Add compile options for Java 1.8 version in the Application's `build.gradle` files
